@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Incognito Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <style>
+        body { background: #010409; color: #e6edf3; font-family: sans-serif; height: 100dvh; display: flex; align-items: center; justify-content: center; margin: 0; }
+        .glass { background: rgba(13, 17, 23, 0.95); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); width: 100%; max-width: 420px; height: 80vh; border-radius: 2rem; display: flex; flex-direction: column; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+        .status-bar { font-size: 10px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+        input::placeholder { color: #475569; }
+    </style>
+</head>
+<body>
+
+    <div class="glass">
+        <div class="p-6 border-b border-white/10">
+            <h1 class="text-xl font-black text-white italic">INCOGNITO</h1>
+            <div id="status-container" class="status-bar mt-1 flex items-center gap-2 text-red-500">
+                <span id="status-dot" class="w-2 h-2 rounded-full bg-current"></span>
+                <span id="status-text">Ready to Join</span>
+            </div>
+            
+            <div id="setup-panel" class="mt-4 flex gap-2">
+                <input type="text" id="room-input" placeholder="Secret Room Name" class="flex-1 bg-slate-900 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-blue-500">
+                <button onclick="boot()" class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-xl text-xs font-bold transition-all active:scale-95">GO</button>
+            </div>
+        </div>
+
+        <div id="chat-thread" class="flex-1 overflow-y-auto p-6 space-y-4">
+            <div class="opacity-20 text-center mt-20 text-xs">Enter a shared secret name to link.</div>
+        </div>
+
+        <div class="p-4 bg-black/40 border-t border-white/10 flex gap-2">
+            <input type="text" id="message-input" placeholder="Secure message..." class="flex-1 bg-transparent outline-none text-sm text-white px-2">
+            <button onclick="sendMessage()" class="bg-blue-600 hover:bg-blue-500 p-3 rounded-xl transition-all">
+                <svg width="18" height="18" fill="white" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        let peer, conn, roomID;
+
+        function updateStatus(text, colorClass) {
+            const container = document.getElementById('status-container');
+            container.className = `status-bar mt-1 flex items-center gap-2 ${colorClass}`;
+            document.getElementById('status-text').innerText = text;
+        }
+
+        function boot() {
+            roomID = document.getElementById('room-input').value.trim().toLowerCase();
+            if (!roomID) return;
+
+            document.getElementById('setup-panel').style.display = 'none';
+            updateStatus("Initializing...", "text-yellow-500");
+
+            // Strategy: We try to be 'RoomName_Host'. If it fails, we are 'RoomName_Guest'
+            // and we connect to the host.
+            peer = new Peer(roomID + "_host", {
+                config: {'iceServers': [{ urls: 'stun:stun.l.google.com:19302' }]}
+            });
+
+            peer.on('open', () => {
+                updateStatus("Waiting for partner...", "text-blue-500");
+            });
+
+            // If the ID is taken (someone is already host), join as guest
+            peer.on('error', (err) => {
+                if (err.type === 'id-taken') {
+                    peer = new Peer(roomID + "_guest");
+                    peer.on('open', () => {
+                        updateStatus("Connecting to host...", "text-blue-500");
+                        const link = peer.connect(roomID + "_host", { reliable: true });
+                        setupConnection(link);
+                    });
+                } else {
+                    updateStatus("Network Error", "text-red-500");
+                }
+            });
+
+            peer.on('connection', setupConnection);
+        }
+
+        function setupConnection(c) {
+            conn = c;
+            conn.on('open', () => {
+                updateStatus("Secure Tunnel Active", "text-green-500");
+                document.getElementById('chat-thread').innerHTML = ""; // Clear help text
+            });
+            conn.on('data', data => renderMessage(data, 'them'));
+            conn.on('close', () => updateStatus("Partner Disconnected", "text-red-500"));
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('message-input');
+            if (!input.value || !conn) return;
+            conn.send(input.value);
+            renderMessage(input.value, 'me');
+            input.value = "";
+        }
+
+        function renderMessage(text, sender) {
+            const div = document.createElement('div');
+            div.className = `flex ${sender === 'me' ? 'justify-end' : 'justify-start'}`;
+            div.innerHTML = `<div class="p-3 px-4 max-w-[85%] rounded-2xl text-sm leading-relaxed ${sender === 'me' ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-200 rounded-tl-none'}">${text}</div>`;
+            const thread = document.getElementById('chat-thread');
+            thread.appendChild(div);
+            thread.scrollTop = thread.scrollHeight;
+        }
+
+        document.getElementById('message-input').onkeydown = e => e.key === 'Enter' && sendMessage();
+    </script>
+</body>
+</html>
