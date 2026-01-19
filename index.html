@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Incognito Chat | Pana Ngwenya Protocol</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        :root { --p-blue: #3b82f6; }
+        body { background: #010409; color: #e6edf3; font-family: system-ui, -apple-system, sans-serif; height: 100dvh; overflow: hidden; margin: 0; }
+        .glass-ui { background: rgba(13, 17, 23, 0.95); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); }
+        .burn-out { animation: burnEffect 10s forwards; }
+        @keyframes burnEffect { 0%, 85% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-10px); filter: blur(10px); } }
+        /* Fix for mobile button responsiveness */
+        button { cursor: pointer; touch-action: manipulation; }
+        input { color-scheme: dark; }
+    </style>
+</head>
+<body class="flex items-center justify-center">
+
+    <div id="auth-gate" class="fixed inset-0 z-[100] bg-[#010409] flex flex-col items-center justify-center p-8 text-center">
+        <h1 class="text-4xl font-black italic tracking-tighter text-white mb-2">INCOGNITO</h1>
+        <p class="text-blue-500 text-[10px] font-bold tracking-[0.4em] uppercase mb-12">Pana Ngwenya v2.8</p>
+        <button id="boot-btn" class="bg-blue-600 hover:bg-blue-500 px-16 py-5 rounded-full font-black text-xs tracking-widest shadow-2xl transition-all active:scale-90 text-white">
+            INITIALIZE VAULT
+        </button>
+    </div>
+
+    <div id="app-shell" class="hidden w-full h-full max-w-5xl glass-ui md:m-4 md:rounded-[2rem] flex flex-col lg:flex-row overflow-hidden">
+        
+        <aside class="w-full lg:w-80 border-b lg:border-b-0 lg:border-r border-white/10 flex flex-col bg-black/30">
+            <div class="p-6">
+                <div id="qrcode" class="mb-4 hidden lg:flex justify-center bg-white p-2 rounded-xl h-40 w-40 mx-auto"></div>
+                <div class="space-y-3">
+                    <div class="bg-slate-900/80 p-4 rounded-xl border border-white/5">
+                        <p class="text-[9px] text-slate-500 font-bold uppercase mb-1">My Global Signal</p>
+                        <code id="my-peer-id" class="text-xs text-blue-400 font-mono break-all font-bold">WAITING...</code>
+                    </div>
+                    <input type="text" id="target-id" placeholder="Paste Partner ID" class="w-full bg-black/60 border border-white/20 rounded-xl px-4 py-4 text-sm outline-none focus:border-blue-500 text-white">
+                    <button id="connect-btn" class="w-full bg-blue-600 py-4 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 active:scale-95 text-white transition-all">
+                        Link P2P Tunnel
+                    </button>
+                </div>
+            </div>
+            
+            <div class="mt-auto p-6 hidden lg:block border-t border-white/5">
+                <div class="flex items-center gap-3">
+                    <div id="status-dot" class="w-2.5 h-2.5 bg-yellow-500 rounded-full animate-pulse"></div>
+                    <span id="session-status" class="text-[10px] font-black uppercase tracking-widest text-slate-400">Negotiating</span>
+                </div>
+            </div>
+        </aside>
+
+        <main class="flex-1 flex flex-col relative">
+            <div id="thread" class="flex-1 overflow-y-auto p-6 space-y-4 flex flex-col">
+                <div id="splash" class="my-auto text-center opacity-30">
+                    <p class="text-[10px] font-black tracking-[0.5em] text-slate-500">AWAITING HANDSHAKE</p>
+                </div>
+            </div>
+
+            <div class="p-4 bg-black/40 border-t border-white/10 flex gap-3">
+                <input type="text" id="msg-input" placeholder="Type secret..." class="flex-1 bg-transparent outline-none text-sm text-white px-2">
+                <button id="send-btn" class="bg-blue-600 px-8 py-3 rounded-xl font-black text-[10px] uppercase text-white hover:bg-blue-500 active:scale-90">Send</button>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        let peer, conn, p2pKey, myKeys;
+
+        // UI Element Selectors
+        const bootBtn = document.getElementById('boot-btn');
+        const connectBtn = document.getElementById('connect-btn');
+        const sendBtn = document.getElementById('send-btn');
+        const msgInput = document.getElementById('msg-input');
+
+        // 1. Initial Start Button
+        bootBtn.addEventListener('click', async () => {
+            console.log("Booting Vault...");
+            bootBtn.innerText = "GENERATING KEYS...";
+            bootBtn.disabled = true;
+
+            try {
+                myKeys = await crypto.subtle.generateKey(
+                    { name: "ECDH", namedCurve: "P-256" }, 
+                    true, ["deriveKey"]
+                );
+                
+                document.getElementById('auth-gate').style.display = 'none';
+                document.getElementById('app-shell').classList.remove('hidden');
+                document.getElementById('app-shell').classList.add('flex');
+                
+                startPeerEngine();
+            } catch (e) {
+                alert("Security Error: Check if you are on HTTPS");
+                bootBtn.disabled = false;
+                bootBtn.innerText = "INITIALIZE VAULT";
+            }
+        });
+
+        // 2. PeerJS Setup
+        function startPeerEngine() {
+            if (typeof Peer === 'undefined') {
+                alert("PeerJS failed to load. Check your internet/VPN.");
+                return;
+            }
+
+            peer = new Peer({
+                config: {
+                    'iceServers': [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:global.stun.twilio.com:3478' },
+                        { 
+                            urls: 'turn:openrelay.metered.ca:80', 
+                            username: 'openrelayproject', 
+                            password: 'openrelayproject' 
+                        }
+                    ],
+                    'iceCandidatePoolSize': 10
+                }
+            });
+
+            peer.on('open', id => {
+                document.getElementById('my-peer-id').innerText = id;
+                if (window.QRCode) {
+                    new QRCode(document.getElementById("qrcode"), { text: id, width: 160, height: 160 });
+                }
+            });
+
+            peer.on('connection', c => {
+                conn = c;
+                setupMeshEvents();
+            });
+
+            peer.on('error', err => {
+                console.error("Peer Error:", err.type);
+                document.getElementById('session-status').innerText = "SYSTEM ERROR";
+            });
+        }
+
+        // 3. Connection Logic
+        connectBtn.addEventListener('click', () => {
+            const targetId = document.getElementById('target-id').value.trim();
+            if (!targetId) return;
+            
+            connectBtn.innerText = "LINKING...";
+            connectBtn.disabled = true;
+
+            conn = peer.connect(targetId, { reliable: true });
+            setupMeshEvents();
+        });
+
+        function setupMeshEvents() {
+            document.getElementById('splash').style.display = 'none';
+
+            conn.on('open', async () => {
+                connectBtn.innerText = "TUNNEL LINKED";
+                const pubJwk = await crypto.subtle.exportKey("jwk", myKeys.publicKey);
+                conn.send({ type: 'HS', key: pubJwk });
+            });
+
+            conn.on('data', async data => {
+                if (data.type === 'HS') {
+                    const partnerPub = await crypto.subtle.importKey("jwk", data.key, { name: "ECDH", namedCurve: "P-256" }, true, []);
+                    p2pKey = await crypto.subtle.deriveKey({ name: "ECDH", public: partnerPub }, myKeys.privateKey, { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+                    
+                    document.getElementById('status-dot').className = "w-2.5 h-2.5 bg-green-500 rounded-full shadow-[0_0_10px_#22c55e]";
+                    document.getElementById('session-status').innerText = "E2EE ACTIVE";
+                } else if (p2pKey) {
+                    const decrypted = await decrypt(data);
+                    render(decrypted, 'them');
+                }
+            });
+        }
+
+        // 4. Messaging Logic
+        async function encrypt(t) {
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, p2pKey, new TextEncoder().encode(t));
+            return { ct: Array.from(new Uint8Array(ct)), iv: Array.from(iv) };
+        }
+
+        async function decrypt(d) {
+            const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(d.iv) }, p2pKey, new Uint8Array(d.ct));
+            return new TextDecoder().decode(pt);
+        }
+
+        sendBtn.addEventListener('click', sendMsg);
+        msgInput.addEventListener('keydown', e => e.key === 'Enter' && sendMsg());
+
+        async function sendMsg() {
+            if (!msgInput.value || !p2pKey) return;
+            const text = msgInput.value;
+            const payload = await encrypt(text);
+            conn.send(payload);
+            render(text, 'me');
+            msgInput.value = "";
+        }
+
+        function render(text, side) {
+            const m = document.createElement('div');
+            m.className = `flex ${side === 'me' ? 'justify-end' : 'justify-start'} burn-out`;
+            m.innerHTML = `<div class="p-3 px-5 max-w-[85%] rounded-2xl text-sm ${side === 'me' ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-200 rounded-tl-none'}">${text}</div>`;
+            document.getElementById('thread').appendChild(m);
+            const t = document.getElementById('thread'); t.scrollTop = t.scrollHeight;
+        }
+    </script>
+</body>
+</html>
